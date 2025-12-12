@@ -1,0 +1,34 @@
+services:
+  github-runner:
+    # Build the runner image with dynamic configuration
+    build:
+      context: .
+      args:
+        # Docker group ID from host system - must match host's docker group
+        # Get with: getent group docker | cut -d: -f3
+        DOCKER_GID: ${DOCKER_GID}
+
+    # Load environment variables from .env file
+    env_file:
+      - .env
+
+    # Runtime environment configuration
+    environment:
+      # GitHub repository URL to register runner with
+      REPO_URL: https://github.com/mbeckenbach/hotairandmagic
+
+      # Personal Access Token for automatic runner token generation
+      # Create at: https://github.com/settings/tokens with 'repo' and 'workflow' scopes
+      ACCESS_TOKEN: ${ACCESS_TOKEN}
+
+      # Custom name for this runner instance
+      RUNNER_NAME: docker-runner
+      # Labels for workflow targeting (comma-separated)
+      LABELS: linux,x64,docker
+
+    # Mount Docker socket for Docker-in-Docker capabilities
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Automatically restart unless manually stopped
+    restart: unless-stopped
