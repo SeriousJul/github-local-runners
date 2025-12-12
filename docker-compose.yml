@@ -1,4 +1,22 @@
 services:
+  # Local GitHub Actions cache server for fast caching
+  actions-cache:
+    image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
+    container_name: actions-cache-server
+    volumes:
+      - cache-storage:/app/.data
+    environment:
+      # API configuration
+      - API_BASE_URL=http://actions-cache:3000
+      # Storage backend (filesystem, s3, gcs)
+      - STORAGE_DRIVER=filesystem
+      # Database backend (sqlite, postgres, mysql)
+      - DB_DRIVER=sqlite
+      # Cleanup old cache entries (days)
+      - CACHE_CLEANUP_OLDER_THAN_DAYS=90
+      - DEBUG=false
+    restart: unless-stopped
+
   github-runner:
     # Build the runner image with dynamic configuration
     build:
@@ -26,9 +44,22 @@ services:
       # Labels for workflow targeting (comma-separated)
       LABELS: linux,x64,docker
 
+      # Local cache server configuration (must end with trailing slash!)
+      # CUSTOM_ACTIONS_RESULTS_URL is used by the forked runner
+      ACTIONS_RESULTS_URL: http://actions-cache:3000/
+      CUSTOM_ACTIONS_RESULTS_URL: http://actions-cache:3000/
+
     # Mount Docker socket for Docker-in-Docker capabilities
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
+    # Ensure cache server starts first
+    depends_on:
+      - actions-cache
+
     # Automatically restart unless manually stopped
     restart: unless-stopped
+
+# Named volumes for persistent storage
+volumes:
+  cache-storage:

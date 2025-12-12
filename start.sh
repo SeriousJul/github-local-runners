@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Set working directory to runner directory
+cd /home/runner
+
 # Function to get a fresh runner token using Personal Access Token
 get_runner_token() {
     echo "Getting fresh runner token using Personal Access Token..."
@@ -77,7 +80,7 @@ setup_runner() {
         --url ${REPO_URL} \
         --token ${RUNNER_TOKEN} \
         --name ${RUNNER_NAME:-$(hostname)} \
-        --work /github/workspace \
+        --work _work \
         --labels ${LABELS:-self-hosted,linux,x64,docker} \
         --replace
 }
