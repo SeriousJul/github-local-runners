@@ -1,22 +1,85 @@
 services:
+  # PostgreSQL database for cache metadata
+  postgres:
+    image: postgres:16-alpine
+    container_name: actions-cache-postgres
+    environment:
+      POSTGRES_DB: gha_cache
+      POSTGRES_USER: cache_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cache_user -d gha_cache"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - runner-network
+
+  # MinIO S3-compatible object storage for cache data
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: actions-cache-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme123}
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"  # MinIO API
+      - "9001:9001"  # MinIO Web Console
+    restart: always
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - runner-network
+
   # Local GitHub Actions cache server for fast caching
   actions-cache:
     image: ghcr.io/falcondev-oss/github-actions-cache-server:latest
-    container_name: actions-cache-server
-    volumes:
-      - cache-storage:/app/.data
     environment:
       # API configuration
       - API_BASE_URL=http://actions-cache:3000
-      # Storage backend (filesystem, s3, gcs)
-      - STORAGE_DRIVER=filesystem
-      # Database backend (sqlite, postgres, mysql)
-      - DB_DRIVER=sqlite
+      # Storage backend (S3 via MinIO)
+      - STORAGE_DRIVER=s3
+      - STORAGE_S3_BUCKET=gh-actions-cache
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minio_admin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-changeme123}
+      - AWS_ENDPOINT_URL=http://minio:9000
+      - AWS_REGION=us-east-1
+      # Database backend (PostgreSQL)
+      - DB_DRIVER=postgres
+      - DB_POSTGRES_HOST=postgres
+      - DB_POSTGRES_PORT=5432
+      - DB_POSTGRES_DATABASE=gha_cache
+      - DB_POSTGRES_USER=cache_user
+      - DB_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
       # Cleanup old cache entries (days)
       - CACHE_CLEANUP_OLDER_THAN_DAYS=90
       - DEBUG=false
-    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: always
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - runner-network
 
+  # GitHub Actions Runner - scales to multiple replicas
+  # Scale with: docker compose up --scale github-runner=4
+  # Or use ./up.sh script which reads RUNNER_REPLICAS from .env
   github-runner:
     # Build the runner image with dynamic configuration
     build:
@@ -39,8 +102,10 @@ services:
       # Create at: https://github.com/settings/tokens with 'repo' and 'workflow' scopes
       ACCESS_TOKEN: ${ACCESS_TOKEN}
 
-      # Custom name for this runner instance
-      RUNNER_NAME: docker-runner
+      # Runner name prefix (will append container hostname for uniqueness)
+      # Results in names like: myserver-runner-github-runners-github-runner-1
+      RUNNER_NAME_PREFIX: ${RUNNER_NAME_PREFIX:-docker-runner}
+      
       # Labels for workflow targeting (comma-separated)
       LABELS: linux,x64,docker
 
@@ -56,13 +121,23 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 
-    # Ensure cache server starts first
+    # Ensure cache server is healthy before starting
     depends_on:
-      - actions-cache
+      actions-cache:
+        condition: service_healthy
 
-    # Automatically restart unless manually stopped
-    restart: unless-stopped
+    # Automatically restart on failure or reboot
+    restart: always
+    
+    networks:
+      - runner-network
 
 # Named volumes for persistent storage
 volumes:
-  cache-storage:
+  postgres-data:
+  minio-data:
+
+# Network for service communication
+networks:
+  runner-network:
+    driver: bridge

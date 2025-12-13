@@ -38,7 +38,7 @@ get_runner_token() {
 
 # Function to remove existing runner via GitHub API
 remove_runner() {
-    local runner_name="${RUNNER_NAME:-$(hostname)}"
+    local runner_name="${RUNNER_NAME_PREFIX}-${HOSTNAME}"
     echo "Removing any existing runner with name: $runner_name"
 
     # Extract repo owner and name from REPO_URL
@@ -79,7 +79,7 @@ setup_runner() {
     ./config.sh --unattended \
         --url ${REPO_URL} \
         --token ${RUNNER_TOKEN} \
-        --name ${RUNNER_NAME:-$(hostname)} \
+        --name ${RUNNER_NAME_PREFIX}-${HOSTNAME} \
         --work _work \
         --labels ${LABELS:-self-hosted,linux,x64,docker} \
         --replace
