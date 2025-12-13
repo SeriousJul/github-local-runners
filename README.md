@@ -8,6 +8,7 @@ This repository provides a scalable Docker Compose setup for running self-hosted
 - **Cache Server**: GitHub Actions cache server for fast artifact/dependency caching
 - **PostgreSQL**: Database for cache metadata (supports concurrent access)
 - **MinIO**: S3-compatible object storage for cache data (supports concurrent access)
+- **Nx Remote Cache**: Optional self-hosted caching for Nx monorepos (uses MinIO)
 
 ## Features
 
@@ -18,6 +19,7 @@ This repository provides a scalable Docker Compose setup for running self-hosted
 - ✅ Automatic token refresh (every 50 minutes)
 - ✅ Friendly runner names with hostname prefix
 - ✅ Easy management with helper scripts
+- ✅ **LOCAL Nx remote caching support** (optional, enforced at runner level)
 
 ## Prerequisites
 
@@ -122,6 +124,9 @@ POSTGRES_PASSWORD=your_secure_password
 # MinIO credentials (set strong credentials!)
 MINIO_ROOT_USER=minio_admin
 MINIO_ROOT_PASSWORD=your_secure_minio_password
+
+# Optional: Nx remote caching (leave empty if not using Nx)
+NX_KEY=
 ```
 
 ### 3. Start Services
@@ -188,8 +193,9 @@ Where:
 
 1. Check MinIO is healthy: `docker compose ps`
 2. Access MinIO console: http://localhost:9001
-3. Verify bucket exists: Should see `gh-actions-cache` bucket
+3. Verify buckets exist: Should see `gh-actions-cache` and `nx-cache` buckets
 4. Check cache server logs: `docker compose logs actions-cache`
+5. Check bucket initialization: `docker compose logs init-bucket`
 
 ### Database connection errors
 
@@ -203,6 +209,129 @@ Where:
 2. Update .env with correct DOCKER_GID
 3. Restart: `./down.sh && ./up.sh`
 
+## Nx Remote Caching (Optional)
+
+If you're using an Nx monorepo, this infrastructure supports **self-hosted remote caching** using the existing MinIO S3 storage. Cache configuration is **enforced at the runner level** via environment variables, so your workflow YAML files don't need any cache-specific configuration.
+
+### Quick Start: Enable Nx Caching
+
+To enable Nx caching in your Nx workspace:
+
+1. **In your Nx workspace repository:**
+   ```bash
+   nx add @nx/s3-cache  # This generates NX_KEY automatically
+   ```
+
+2. **In this runners repository:**
+   ```bash
+   # Add the NX_KEY to .env
+   echo "NX_KEY=your_generated_key" >> .env
+   
+   # Restart runners
+   ./down.sh
+   ./up.sh
+   ```
+
+That's it! Nx will automatically use the self-hosted cache without any workflow YAML changes.
+
+### Setup Steps
+
+#### 1. Install Nx S3 Cache Plugin in Your Nx Workspace
+
+In your Nx workspace repository (not this runner repo):
+
+```bash
+# Install the S3 cache plugin
+nx add @nx/s3-cache
+
+# During installation, an activation key (NX_KEY) will be generated automatically
+# Copy this key - you'll need it for the next step
+```
+
+**Important:** The `NX_KEY` is free and generated automatically. It's required for the `@nx/s3-cache` plugin to function.
+
+#### 2. Configure the Runner
+
+Add the `NX_KEY` to your `.env` file in this runner repository:
+
+```bash
+# In /home/max/Source/github-runners/.env
+NX_KEY=your_generated_key_from_step_1
+```
+
+The runners are already configured with these environment variables (no changes needed):
+- `AWS_ACCESS_KEY_ID` → Uses your `MINIO_ROOT_USER`
+- `AWS_SECRET_ACCESS_KEY` → Uses your `MINIO_ROOT_PASSWORD`
+- `AWS_ENDPOINT_URL=http://minio:9000`
+- `AWS_REGION=us-east-1`
+
+#### 3. Restart Runners
+
+```bash
+./down.sh
+./up.sh
+```
+
+#### 4. Configure Your Nx Workspace (Optional)
+
+The environment variables set in the runners are sufficient for most use cases. However, you can also configure caching in your Nx workspace's `nx.json` if you want explicit configuration:
+
+```json
+{
+  "s3": {
+    "bucket": "nx-cache"
+  }
+}
+```
+
+**Note:** Since authentication and endpoint are provided via environment variables in the runner, you only need to specify the bucket name if you choose to configure `nx.json`.
+
+### How It Works
+
+1. **Transparent to Workflows**: Your GitHub Actions workflows don't need any special configuration. The runner environment variables automatically enable Nx caching.
+2. **Shared Storage**: The Nx cache uses the same MinIO instance as GitHub Actions cache, but in a separate `nx-cache` bucket.
+3. **Concurrent Access**: Multiple runners can safely read/write to the cache simultaneously.
+4. **Automatic Bucket Creation**: The `nx-cache` bucket is automatically created when services start.
+
+### Verification
+
+After running a workflow with Nx tasks:
+
+1. **Check MinIO Console**: http://localhost:9001
+   - Navigate to the `nx-cache` bucket
+   - You should see cached task outputs stored as objects
+
+2. **Check Nx Output**: Your workflow logs should show cache hits:
+   ```
+   Nx read the output from the cache instead of running the command for 5 out of 10 tasks.
+   ```
+
+### Security Considerations
+
+**⚠️ CVE-2025-36852 (CREEP Vulnerability)**
+
+Bucket-based caching solutions (including `@nx/s3-cache`) are affected by a security vulnerability where anyone with PR access can potentially poison production builds by injecting malicious cache entries.
+
+**Mitigation Strategies:**
+
+1. **Separate Buckets for PR vs Production** (Recommended):
+   - Use different `NX_KEY` values for PR runners vs production runners
+   - Configure separate MinIO buckets or IAM policies to isolate PR cache from production cache
+
+2. **Implement IAM Policies in MinIO**:
+   - Restrict write access to production cache bucket
+   - Allow PR runners read-only access to production cache
+
+3. **Monitor Cache Usage**:
+   - Regularly audit the `nx-cache` bucket for unexpected entries
+   - Set up alerts for unusual cache write patterns
+
+4. **Consider Custom Cache Server**:
+   - For maximum security, implement a custom cache server with enhanced authorization logic
+   - This allows fine-grained control over who can read/write specific cache entries
+
+For more information, see: [Nx Security Advisories](https://github.com/nrwl/nx/security/advisories)
+
 ## Security Best Practices
 
 1. **Protect .env file**: `chmod 600 .env`
@@ -211,6 +340,7 @@ Where:
 4. **Rotate ACCESS_TOKEN** regularly
 5. **Limit token scopes** to only what's needed (repo, workflow)
 6. **Keep Docker images updated**: Regularly pull latest images
+7. **Nx caching security**: Be aware of CVE-2025-36852 and implement appropriate mitigations if using Nx remote caching
 
 ## Maintenance
 

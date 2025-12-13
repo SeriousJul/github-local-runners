@@ -51,31 +51,14 @@ docker compose up postgres minio -d
 echo -e "\n${GREEN}Waiting for PostgreSQL and MinIO to be healthy...${NC}"
 sleep 3
 
-# Wait for MinIO to be ready
-echo -e "${GREEN}Checking MinIO status...${NC}"
-timeout=60
-elapsed=0
-while [[ $elapsed -lt $timeout ]]; do
-    if docker compose exec -T minio mc alias set local http://localhost:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" &>/dev/null; then
-        echo -e "${GREEN}MinIO is ready!${NC}"
-        break
-    fi
-    sleep 2
-    elapsed=$((elapsed + 2))
-done
-
-if [[ $elapsed -ge $timeout ]]; then
-    echo -e "${RED}ERROR: MinIO did not become ready in time${NC}"
-    exit 1
-fi
-
-# Step 2: Create MinIO bucket BEFORE starting cache server
-echo -e "${GREEN}Ensuring MinIO bucket exists...${NC}"
-if docker compose exec -T minio mc ls local/gh-actions-cache &>/dev/null; then
-    echo -e "${YELLOW}Bucket 'gh-actions-cache' already exists${NC}"
+# Step 2: Create nx-cache bucket if it doesn't exist
+echo -e "${GREEN}Ensuring nx-cache bucket exists...${NC}"
+docker compose exec -T minio mc alias set local http://localhost:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1
+if docker compose exec -T minio mc ls local/nx-cache &>/dev/null; then
+    echo -e "${YELLOW}Bucket 'nx-cache' already exists${NC}"
 else
-    echo -e "${GREEN}Creating bucket 'gh-actions-cache'...${NC}"
-    docker compose exec -T minio mc mb local/gh-actions-cache
+    echo -e "${GREEN}Creating bucket 'nx-cache'...${NC}"
+    docker compose exec -T minio mc mb local/nx-cache
     echo -e "${GREEN}Bucket created successfully!${NC}"
 fi
 

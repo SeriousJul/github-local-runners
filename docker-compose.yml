@@ -116,6 +116,15 @@ services:
       ACTIONS_RESULTS_URL: http://actions-cache:3000/
       CUSTOM_ACTIONS_RESULTS_URL: http://actions-cache:3000/
 
+      # Nx remote caching configuration (enforced at runner level)
+      # These environment variables enable Nx to use self-hosted S3 cache
+      # without requiring workflow YAML changes
+      NX_KEY: ${NX_KEY:-}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio_admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-changeme123}
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_REGION: us-east-1
+
       # Disable verbose INFO logging to stdout
       ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: 0
 
