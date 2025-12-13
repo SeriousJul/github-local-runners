@@ -96,7 +96,8 @@ services:
     # Runtime environment configuration
     environment:
       # GitHub repository URL to register runner with
-      REPO_URL: https://github.com/mbeckenbach/hotairandmagic
+      # Format: https://github.com/owner/repo (constructed from GITHUB_REPO env var)
+      REPO_URL: https://github.com/${GITHUB_REPO}
 
       # Personal Access Token for automatic runner token generation
       # Create at: https://github.com/settings/tokens with 'repo' and 'workflow' scopes
@@ -106,8 +107,9 @@ services:
       # Results in names like: myserver-runner-github-runners-github-runner-1
       RUNNER_NAME_PREFIX: ${RUNNER_NAME_PREFIX:-docker-runner}
       
-      # Labels for workflow targeting (comma-separated)
-      LABELS: linux,x64,docker
+      # Runner architecture (x64 or ARM64)
+      # Leave empty for auto-detection (recommended)
+      RUNNER_ARCH: ${RUNNER_ARCH:-}
 
       # Local cache server configuration (must end with trailing slash!)
       # CUSTOM_ACTIONS_RESULTS_URL is used by the forked runner

@@ -81,7 +81,7 @@ setup_runner() {
         --token ${RUNNER_TOKEN} \
         --name ${RUNNER_NAME_PREFIX}-${HOSTNAME} \
         --work _work \
-        --labels ${LABELS:-self-hosted,linux,x64,docker} \
+        --labels ${LABELS:-self-hosted,linux,${RUNNER_ARCH:-x64},docker} \
         --replace
 }
 
@@ -167,6 +167,34 @@ if [[ -n "$DOCKER_GID" ]]; then
 else
     echo "DOCKER_GID not set, skipping docker group setup."
 fi
+
+# Auto-detect architecture if not explicitly set
+if [[ -z "${RUNNER_ARCH}" ]]; then
+    HOST_ARCH=$(uname -m)
+    case $HOST_ARCH in
+        x86_64)
+            RUNNER_ARCH="x64"
+            ;;
+        aarch64|arm64)
+            RUNNER_ARCH="ARM64"
+            ;;
+        *)
+            echo "Warning: Unknown architecture '$HOST_ARCH', defaulting to x64"
+            RUNNER_ARCH="x64"
+            ;;
+    esac
+    echo "Auto-detected architecture: $RUNNER_ARCH"
+else
+    echo "Using configured architecture: $RUNNER_ARCH"
+fi
+export RUNNER_ARCH
+
+# Construct labels with detected architecture if not explicitly set
+if [[ -z "${LABELS}" ]]; then
+    LABELS="self-hosted,linux,${RUNNER_ARCH},docker"
+    echo "Using labels: $LABELS"
+fi
+export LABELS
 
 # Get fresh runner token at startup
 get_runner_token

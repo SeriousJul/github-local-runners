@@ -17,6 +17,7 @@ This is a **self-hosted GitHub Actions runner infrastructure** using Docker Comp
 - **Docker-in-Docker:** Mounts host's Docker socket for running containers within workflows
 - **Auto-registration:** Automatically registers with GitHub using Personal Access Token
 - **Token refresh:** Automatically refreshes registration token every 50 minutes (GitHub tokens expire after 1 hour)
+- **Multi-Architecture:** Automatically detects x64 or ARM64 architecture and sets appropriate labels
 
 ### 2. Cache Server (`actions-cache`)
 - **Image:** `ghcr.io/falcondev-oss/github-actions-cache-server:latest`
@@ -71,9 +72,9 @@ This is a **self-hosted GitHub Actions runner infrastructure** using Docker Comp
 ### User-Configured (in .env)
 
 | Variable | Purpose | Example |
-|----------|---------|---------|
-| `RUNNER_REPLICAS` | Number of runner instances | `4` |
+|----------|---------|---------|| `GITHUB_REPO` | GitHub repository (owner/repo format) | `mbeckenbach/hotairandmagic` || `RUNNER_REPLICAS` | Number of runner instances | `4` |
 | `RUNNER_NAME_PREFIX` | Prefix for runner names | `myserver-runner` |
+| `RUNNER_ARCH` | Runner architecture (optional) | Empty (auto-detect), `x64`, or `ARM64` |
 | `DOCKER_GID` | Host's docker group ID | `999` |
 | `ACCESS_TOKEN` | GitHub Personal Access Token | `ghp_xxx...` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | `securepass123` |
@@ -84,8 +85,9 @@ This is a **self-hosted GitHub Actions runner infrastructure** using Docker Comp
 
 | Variable | Purpose | Value |
 |----------|---------|-------|
-| `REPO_URL` | GitHub repo to register with | Currently: `https://github.com/mbeckenbach/hotairandmagic` |
-| `LABELS` | Runner labels for workflow targeting | `linux,x64,docker` |
+| `REPO_URL` | GitHub repo to register with | Constructed from `GITHUB_REPO`: `https://github.com/${GITHUB_REPO}` |
+| `RUNNER_ARCH` | Architecture label (auto-detected) | `x64` or `ARM64` based on `uname -m` |
+| `LABELS` | Runner labels for workflow targeting | Constructed in start.sh: `self-hosted,linux,{RUNNER_ARCH},docker` |
 | `ACTIONS_RESULTS_URL` | Cache server URL | `http://actions-cache:3000/` |
 | `CUSTOM_ACTIONS_RESULTS_URL` | Custom cache URL (forked runner) | `http://actions-cache:3000/` |
 
@@ -187,6 +189,30 @@ In `start.sh`:
 - Restarts runner
 - **Why:** GitHub runner tokens expire after 1 hour
 
+### Multi-Architecture Support
+
+**Architecture Detection (in `start.sh`):**
+- Automatically detects host architecture using `uname -m`
+- Maps `x86_64` → `x64` label
+- Maps `aarch64` or `arm64` → `ARM64` label
+- Falls back to `x64` for unknown architectures
+- Can be overridden via `RUNNER_ARCH` environment variable
+
+**Label Format:**
+- Uses GitHub Actions standard: `ARM64` (uppercase) for ARM64 runners
+- Uses `x64` (lowercase) for x64 runners
+- Full label format: `self-hosted,linux,{RUNNER_ARCH},docker`
+
+**Mixed-Architecture Deployments:**
+- Supports running both x64 and ARM64 runners simultaneously
+- Workflows specify architecture via `runs-on: [self-hosted, linux, x64]` or `runs-on: [self-hosted, linux, ARM64]`
+- GitHub automatically routes jobs to matching runner architecture
+
+**Platform Compatibility:**
+- All base images support multi-architecture (x64 and ARM64)
+- Docker CLI installation auto-detects platform via `dpkg --print-architecture`
+- Node.js installed via nvm automatically downloads correct binaries for platform
+
 ## Troubleshooting Guide
 
 ### Problem: Runners don't appear in GitHub
@@ -236,6 +262,15 @@ In `start.sh`:
 1. Port conflicts? Verify ports 9000 and 9001 aren't used: `netstat -tuln | grep -E '9000|9001'`
 2. MinIO credentials? Try: `docker compose exec minio mc alias set local http://localhost:9000 $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD`
 3. Health check passing? `docker compose ps minio` should show "healthy"
+
+### Problem: Runner shows wrong architecture label
+
+**Check:**
+1. View detected architecture: `./logs.sh` - look for "Auto-detected architecture: x64" or "ARM64"
+2. Verify host architecture: `uname -m` should show `x86_64`, `aarch64`, or `arm64`
+3. Override if needed: Set `RUNNER_ARCH=x64` or `RUNNER_ARCH=ARM64` in `.env`
+4. Check runner labels in GitHub: Settings → Actions → Runners → click runner name
+5. If using Docker Desktop with emulation, architecture may be incorrectly detected
 
 ## Common Mistakes to Avoid
 
@@ -304,15 +339,18 @@ docker volume rm github-runners_postgres-data github-runners_minio-data 2>/dev/n
 # 4. Verify services are healthy
 docker compose ps  # All should show "healthy" status
 
-# 5. Check runner registration
-./logs.sh  # Look for "Successfully obtained fresh runner token"
+# 5. Check runner registration and architecture detection
+./logs.sh  # Look for "Successfully obtained fresh runner token" and "Auto-detected architecture: x64" or "ARM64"
 
 # 6. Verify in GitHub
 # Go to repo Settings → Actions → Runners
-# Should see multiple runners with correct names
+# Should see multiple runners with correct names and architecture labels
 
 # 7. Test cache
 # Trigger a workflow with caching, verify cache hits work
+
+# 8. Test on different architecture (if available)
+# On ARM64 Mac: Pull repo, run ./up.sh, verify ARM64 label
 
 # 8. Test scaling
 echo "RUNNER_REPLICAS=2" >> .env
@@ -328,6 +366,7 @@ echo "RUNNER_REPLICAS=2" >> .env
 4. **Cache is shared** - All runners use same PostgreSQL database and MinIO storage
 5. **Names must be unique** - Each runner needs unique name in GitHub
 6. **Dependencies matter** - Startup order: postgres/minio → cache → runners
+7. **Architecture is auto-detected** - System automatically detects x64 or ARM64 and sets appropriate labels
 
 ## Additional Resources
 
@@ -349,4 +388,4 @@ echo "RUNNER_REPLICAS=2" >> .env
 ---
 
 **Last Updated:** 2025-12-13  
-**Version:** 1.0 (Initial scalability implementation)
+**Version:** 1.1 (Added multi-architecture support)

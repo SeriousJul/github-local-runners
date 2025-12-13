@@ -25,6 +25,59 @@ This repository provides a scalable Docker Compose setup for running self-hosted
 - GitHub Personal Access Token with `repo` and `workflow` scopes (create at: https://github.com/settings/tokens)
 - Host machine's Docker group GID (get with: `getent group docker | cut -d: -f3`)
 
+## Multi-Architecture Support
+
+This setup **automatically detects your system architecture** and configures runners accordingly:
+
+- **x64 (Intel/AMD)**: Detected on Linux x86_64 systems
+- **ARM64 (Apple Silicon)**: Detected on macOS ARM64 and Linux aarch64 systems
+
+### How It Works
+
+The runner automatically detects the host architecture using `uname -m` and sets the appropriate GitHub Actions label:
+- `x86_64` → Runner label: `x64`
+- `aarch64` or `arm64` → Runner label: `ARM64`
+
+Your workflows will see runners with labels like: `[self-hosted, linux, x64, docker]` or `[self-hosted, linux, ARM64, docker]`
+
+### Targeting Specific Architectures
+
+To run workflows on specific architecture runners, use:
+
+```yaml
+jobs:
+  build-x64:
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - run: echo "Running on x64"
+  
+  build-arm64:
+    runs-on: [self-hosted, linux, ARM64]
+    steps:
+      - run: echo "Running on ARM64"
+```
+
+### Override Architecture Detection
+
+If you need to force a specific architecture (e.g., for testing), set `RUNNER_ARCH` in your `.env` file:
+
+```bash
+# Force x64 (not recommended unless needed)
+RUNNER_ARCH=x64
+
+# Force ARM64 (not recommended unless needed)
+RUNNER_ARCH=ARM64
+```
+
+**Note:** Leave `RUNNER_ARCH` empty or unset for automatic detection (recommended).
+
+### Mixed Architecture Deployments
+
+You can run both x64 and ARM64 runners simultaneously:
+1. Deploy on an x64 host with `RUNNER_REPLICAS=4`
+2. Deploy on an ARM64 host with `RUNNER_REPLICAS=4`
+3. Workflows automatically route to the correct architecture based on `runs-on` labels
+
 ## Quick Start
 
 ### 1. Clone and Setup
@@ -52,6 +105,9 @@ RUNNER_REPLICAS=4
 
 # Runner name prefix (will create: myserver-runner-1, myserver-runner-2, etc.)
 RUNNER_NAME_PREFIX=myserver-runner
+
+# Runner architecture (leave empty for auto-detection - recommended)
+RUNNER_ARCH=
 
 # Docker group ID - get with: getent group docker | cut -d: -f3
 DOCKER_GID=999
