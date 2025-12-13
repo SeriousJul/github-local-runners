@@ -49,6 +49,9 @@ services:
       ACTIONS_RESULTS_URL: http://actions-cache:3000/
       CUSTOM_ACTIONS_RESULTS_URL: http://actions-cache:3000/
 
+      # Disable verbose INFO logging to stdout
+      ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: 0
+
     # Mount Docker socket for Docker-in-Docker capabilities
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
