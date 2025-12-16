@@ -15,7 +15,9 @@ This repository provides a scalable Docker Compose setup for running self-hosted
 - ✅ Scale to multiple runner instances
 - ✅ Concurrent cache access (PostgreSQL + MinIO)
 - ✅ Automatic runner registration with GitHub
-- ✅ Docker-in-Docker support for containerized workflows
+- ✅ **Docker-in-Docker with complete isolation** - each runner has its own Docker daemon
+- ✅ **Ephemeral Docker storage** - fast startup, automatic cleanup, no storage bloat
+- ✅ **Docker socket access** - workflows can use Docker without permission errors
 - ✅ Automatic token refresh (every 50 minutes)
 - ✅ Friendly runner names with hostname prefix
 - ✅ Easy management with helper scripts
@@ -205,9 +207,106 @@ Where:
 
 ### Docker socket permission denied
 
-1. Verify DOCKER_GID matches host's docker group: `getent group docker | cut -d: -f3`
-2. Update .env with correct DOCKER_GID
-3. Restart: `./down.sh && ./up.sh`
+This should no longer occur with the Docker-in-Docker setup. Each runner has its own isolated Docker daemon.
+
+If you encounter issues:
+1. Ensure containers have `privileged: true` in docker-compose.yml
+2. Check runner logs: `./logs.sh`
+3. Verify dockerd is running: `docker compose exec github-runner ps aux | grep dockerd`
+
+## Docker-in-Docker (DinD) Architecture
+
+This setup uses **embedded Docker-in-Docker** to provide complete isolation between runners. Each runner container runs its own Docker daemon, eliminating port conflicts and providing network isolation.
+
+### Why Docker-in-Docker?
+
+**Problem:** Multiple runners creating services (like Supabase, PostgreSQL, Redis) on the same ports would conflict when using a shared Docker daemon.
+
+**Solution:** Each runner has its own Docker environment:
+- ✅ **No port conflicts** - All runners can start services on the same ports simultaneously
+- ✅ **Network isolation** - Containers in one runner can't see containers in another
+- ✅ **Independent environments** - Each runner has its own Docker network namespace
+- ✅ **Workflow compatibility** - Services bind to `127.0.0.1` work as expected
+
+### How It Works
+
+```
+┌─────────────────────────────────────────┐
+│         Host Machine                    │
+│  ┌────────────────────────────────┐    │
+│  │ Runner 1 Container             │    │
+│  │  ├─ supervisord                │    │
+│  │  ├─ dockerd (port 2375)        │    │
+│  │  ├─ GitHub Actions runner      │    │
+│  │  └─ Isolated Docker network    │    │
+│  └────────────────────────────────┘    │
+│  ┌────────────────────────────────┐    │
+│  │ Runner 2 Container             │    │
+│  │  ├─ supervisord                │    │
+│  │  ├─ dockerd (port 2375)        │    │
+│  │  ├─ GitHub Actions runner      │    │
+│  │  └─ Isolated Docker network    │    │
+│  └────────────────────────────────┘    │
+│                                         │
+│  All runners share: Cache, MinIO,      │
+│  Registry Cache via bridge network     │
+└─────────────────────────────────────────┘
+```
+
+### Technical Details
+
+- **Storage Driver:** VFS (required for nested Docker)
+- **Supervisor:** Manages both dockerd and runner processes
+- **Privileged Mode:** Required for Docker daemon to function
+- **Cache Access:** Runners access shared services via Docker bridge network
+
+### Verification
+
+Test isolation between runners:
+
+```bash
+# Create container in Runner 1
+docker compose exec github-runner docker run -d --name test alpine sleep 3600
+
+# Check Runner 1 can see it
+docker compose exec github-runner docker ps
+
+# Check Runner 2 cannot see it (should be empty)
+docker compose exec --index 2 github-runner docker ps
+```
+
+## Docker Image Storage
+
+Each runner has **ephemeral Docker storage** - images and containers are automatically cleaned up when the runner stops:
+
+- **Fast startup:** No large persistent volumes to manage
+- **Automatic cleanup:** No disk space bloat from old images
+- **Per-runner isolation:** Each runner's Docker environment is independent
+- **Local caching:** Images pulled by one runner are cached locally on that runner
+- **First pull:** Initial image pull from Docker Hub (~8s), but subsequent pulls on same runner are instant
+
+### Docker Hub Rate Limits
+
+Docker Hub has strict rate limits that can slow down image pulls:
+- **Anonymous:** 100 pulls per 6 hours per IP
+- **Authenticated (free):** 200 pulls per 6 hours
+- **Authenticated (Pro/Team):** Higher limits
+
+**Symptoms of rate limiting:**
+- Pulls taking 6+ minutes
+- Errors: `toomanyrequests: Rate exceeded`
+- Workflows timing out during image pulls
+
+**Solution: Authenticate with Docker Hub (Highly Recommended)**
+
+Add Docker Hub credentials to `.env` to increase rate limit and improve performance:
+```bash
+DOCKERHUB_USERNAME=your_username
+DOCKERHUB_PASSWORD=your_password_or_token
+```
+
+Then restart: `./down.sh && ./up.sh`
+
 
 ## Nx Remote Caching (Optional)
 
@@ -354,8 +453,17 @@ docker compose pull
 
 ### Clear cache data
 
+**Clear GitHub Actions cache:**
 ```bash
-# WARNING: This deletes all cached data
+# WARNING: This deletes all cached workflow data
+./down.sh
+docker volume rm github-runners_minio-data
+docker volume rm github-runners_postgres-data
+./up.sh
+```
+
+**Clear everything:**
+```bash
 ./down.sh
 docker volume rm github-runners_minio-data
 docker volume rm github-runners_postgres-data
@@ -372,17 +480,18 @@ docker stats
 
 ```
 .
-├── docker-compose.yml    # Main service orchestration
-├── Dockerfile           # Custom runner image
-├── start.sh            # Runner startup script (runs inside container)
-├── up.sh              # Helper: Start services
-├── down.sh            # Helper: Stop services
-├── logs.sh            # Helper: View logs
-├── .env               # Environment configuration (YOU create this)
-├── .env.example       # Environment template
-├── README.md          # This file
-├── AGENTS.md          # Documentation for AI assistants
-└── TASKS.md           # Implementation task checklist
+├── docker-compose.yml           # Main service orchestration
+├── Dockerfile                   # Custom runner image with DinD
+├── supervisord.conf             # Process manager for dockerd + runner
+├── start.sh                     # Runner startup script (runs inside container)
+├── up.sh                        # Helper: Start services
+├── down.sh                      # Helper: Stop services
+├── logs.sh                      # Helper: View logs
+├── .env                         # Environment configuration (YOU create this)
+├── .env.example                 # Environment template
+├── README.md                    # This file
+├── AGENTS.md                    # Documentation for AI assistants
+└── TASKS.md                     # Implementation task checklist
 ```
 
 ## Credits

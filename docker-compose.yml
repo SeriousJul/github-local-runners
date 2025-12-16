@@ -63,6 +63,8 @@ services:
       # Cleanup old cache entries (days)
       - CACHE_CLEANUP_OLDER_THAN_DAYS=90
       - DEBUG=false
+    ports:
+      - "3000:3000"  # Expose cache server for host network runners
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,13 +83,9 @@ services:
   # Scale with: docker compose up --scale github-runner=4
   # Or use ./up.sh script which reads RUNNER_REPLICAS from .env
   github-runner:
-    # Build the runner image with dynamic configuration
+    # Build the runner image (no build args needed - DinD is embedded)
     build:
       context: .
-      args:
-        # Docker group ID from host system - must match host's docker group
-        # Get with: getent group docker | cut -d: -f3
-        DOCKER_GID: ${DOCKER_GID}
 
     # Load environment variables from .env file
     env_file:
@@ -112,6 +110,7 @@ services:
       RUNNER_ARCH: ${RUNNER_ARCH:-}
 
       # Local cache server configuration (must end with trailing slash!)
+      # Runners are on same network, can access via service names
       # CUSTOM_ACTIONS_RESULTS_URL is used by the forked runner
       ACTIONS_RESULTS_URL: http://actions-cache:3000/
       CUSTOM_ACTIONS_RESULTS_URL: http://actions-cache:3000/
@@ -119,6 +118,7 @@ services:
       # Nx remote caching configuration (enforced at runner level)
       # These environment variables enable Nx to use self-hosted S3 cache
       # without requiring workflow YAML changes
+      # Runners can access MinIO via service name on same network
       NX_KEY: ${NX_KEY:-}
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio_admin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-changeme123}
@@ -128,9 +128,10 @@ services:
       # Disable verbose INFO logging to stdout
       ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: 0
 
-    # Mount Docker socket for Docker-in-Docker capabilities
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+    # Docker-in-Docker: Each runner has its own embedded Docker daemon
+    # This provides complete network isolation - no port conflicts between runners
+    # Privileged mode is required for running Docker daemon inside container
+    privileged: true
 
     # Ensure cache server is healthy before starting
     depends_on:
@@ -140,8 +141,13 @@ services:
     # Automatically restart on failure or reboot
     restart: always
     
+    # Use bridge network for runner-to-runner isolation
     networks:
       - runner-network
+    
+    # Map host.docker.internal to host gateway for accessing cache/minio
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 # Named volumes for persistent storage
 volumes:

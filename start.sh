@@ -3,6 +3,28 @@
 # Set working directory to runner directory
 cd /home/runner
 
+# Wait for Docker daemon to be ready
+# NOTE: Socket permissions are handled by dockerd-wrapper.sh
+echo "Waiting for Docker daemon to be ready..."
+max_attempts=60
+attempt=0
+while ! docker info >/dev/null 2>&1 && [ $attempt -lt $max_attempts ]; do
+    sleep 1
+    attempt=$((attempt + 1))
+    if [ $((attempt % 10)) -eq 0 ]; then
+        echo "Still waiting for Docker... ($attempt/$max_attempts)"
+    fi
+done
+
+if docker info >/dev/null 2>&1; then
+    echo "✓ Docker daemon is ready"
+    SOCKET_INFO=$(stat -c '%a %U:%G' /var/run/docker.sock 2>/dev/null || echo 'N/A')
+    echo "  Socket permissions: $SOCKET_INFO"
+else
+    echo "ERROR: Docker daemon failed to become ready after ${max_attempts} seconds"
+    exit 1
+fi
+
 # Function to get a fresh runner token using Personal Access Token
 get_runner_token() {
     echo "Getting fresh runner token using Personal Access Token..."
@@ -157,15 +179,25 @@ trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
 
-# Add runner to docker group for Docker socket access if DOCKER_GID is set
-if [[ -n "$DOCKER_GID" ]]; then
-    if ! getent group docker >/dev/null; then
-        sudo groupadd -g "$DOCKER_GID" docker
+# Wait for local Docker daemon to be ready (started by supervisor)
+echo "Waiting for local Docker daemon to be ready..."
+for i in {1..60}; do
+    if docker info >/dev/null 2>&1; then
+        echo "✓ Local Docker daemon is ready (isolated DinD)"
+        break
     fi
-    sudo usermod -aG docker runner
-    echo "Added runner to docker group with GID $DOCKER_GID"
+    if [ $i -eq 60 ]; then
+        echo "ERROR: Docker daemon failed to become ready after 60 seconds"
+        exit 1
+    fi
+    sleep 1
+done
+
+# Verify docker connectivity
+if docker ps >/dev/null 2>&1; then
+    echo "✓ Docker connectivity verified - each runner has isolated Docker environment"
 else
-    echo "DOCKER_GID not set, skipping docker group setup."
+    echo "WARNING: Docker connectivity check failed"
 fi
 
 # Auto-detect architecture if not explicitly set
