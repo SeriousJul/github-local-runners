@@ -144,7 +144,14 @@ services:
     # Use bridge network for runner-to-runner isolation
     networks:
       - runner-network
-    
+
+    # Explicit external DNS resolvers: the host's Docker daemon (see /etc/docker/daemon.json)
+    # points containers at 172.17.0.1 (the default bridge gateway), which is unreachable from
+    # this service's custom "runner-network" bridge and breaks lookups like api.github.com.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+
     # Map host.docker.internal to host gateway for accessing cache/minio
     extra_hosts:
       - "host.docker.internal:host-gateway"

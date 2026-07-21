@@ -62,6 +62,17 @@ else
     echo -e "${GREEN}Bucket created successfully!${NC}"
 fi
 
+# Step 2 bis: Create gh-actions-cache bucket if it doesn't exist
+echo -e "${GREEN}Ensuring gh-actions-cache bucket exists...${NC}"
+docker compose exec -T minio mc alias set local http://localhost:9000 "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1
+if docker compose exec -T minio mc ls local/gh-actions-cache &>/dev/null; then
+    echo -e "${YELLOW}Bucket 'gh-actions-cache' already exists${NC}"
+else
+    echo -e "${GREEN}Creating bucket 'gh-actions-cache'...${NC}"
+    docker compose exec -T minio mc mb local/gh-actions-cache
+    echo -e "${GREEN}Bucket created successfully!${NC}"
+fi
+
 # Step 3: Build and start all services with scaling
 echo -e "\n${GREEN}Building and starting all services...${NC}"
 docker compose up --build --scale github-runner=${RUNNER_REPLICAS} -d
